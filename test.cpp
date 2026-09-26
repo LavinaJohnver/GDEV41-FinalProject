@@ -1,0 +1,193 @@
+#include "raylib.h"
+#include "stdlib.h"
+#include "stdio.h"
+
+//constants
+#define SCREEN_WIDTH 800
+#define SCREEN_HEIGHT 600
+#define PLATFORM_WIDTH 100
+#define PLATFORM_HEIGHT 20
+#define PLAYER_WIDTH 108
+#define PLAYER_HEIGHT 108
+#define GRAVITY 700.0f
+#define JUMP_FORCE 500.0f
+#define MAX_PLATFORMS 10
+#define SCROLL_SPEED 150.0f
+#define WALL_WIDTH 100
+
+
+typedef struct {
+    Rectangle rect;
+    float timeLeft;
+    bool active;
+} Platform;
+
+typedef struct {
+    Rectangle rect;
+    Vector2 velocity;
+    bool onGround;
+} Player;
+
+// Global variables
+Platform platforms[MAX_PLATFORMS];
+Player player;
+float score = 0;
+bool gameOver = false;
+Texture2D playerTexture;
+Rectangle sourceRec;
+Rectangle WallOfFlesh = {0, 0, WALL_WIDTH, SCREEN_HEIGHT};
+
+// Function prototypes
+void InitGame();
+void UpdateGame(float deltaTime);
+void DrawGame();
+void DrawGameOverScreen();
+void ResetPlatforms(Platform* platforms, int count);
+
+int main() {
+    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Platformer");
+
+    playerTexture = LoadTexture("scott.png");
+    sourceRec = (Rectangle){ 0, 0, (float)playerTexture.width/8, (float)playerTexture.height };
+
+    InitGame();
+
+    SetTargetFPS(60); 
+
+    // int currentFrame = 0;
+    // int frameCounter = 0;
+    // int frameSpeed = 8;
+
+    while (!WindowShouldClose()) { 
+        float deltaTime = GetFrameTime();
+
+        UpdateGame(deltaTime);
+
+        // frameCounter++;
+        // if (frameCounter >= (60/frameSpeed)) {
+        //     frameCounter = 0;
+        //     currentFrame++;
+        //     if (currentFrame > 7) currentFrame = 0;
+
+        //     sourceRec.x = (float)currentFrame * (float)playerTexture.width/8;
+        // }
+
+        BeginDrawing();
+        ClearBackground(RAYWHITE);
+
+        if (gameOver) {
+            DrawGameOverScreen();
+        } else {
+            DrawGame();
+        }
+
+        DrawTexturePro(playerTexture, sourceRec, (Rectangle){player.rect.x, player.rect.y, PLAYER_WIDTH, PLAYER_HEIGHT}, (Vector2){0, 0}, 0.0f, WHITE);
+
+        EndDrawing();
+    }
+
+    CloseWindow(); 
+    return 0;
+}
+
+void InitGame() {
+    player.rect = (Rectangle){WALL_WIDTH + 100, SCREEN_HEIGHT - PLAYER_HEIGHT * 2, PLAYER_WIDTH, PLAYER_HEIGHT};
+    player.velocity = (Vector2){0, 0};
+    player.onGround = false;
+
+    for (int i = 0; i < MAX_PLATFORMS; i++) {
+        platforms[i].rect = (Rectangle){(float)GetRandomValue(WALL_WIDTH + PLAYER_WIDTH, SCREEN_WIDTH * 2), (float)GetRandomValue(0, SCREEN_HEIGHT - PLATFORM_HEIGHT), PLATFORM_WIDTH, PLATFORM_HEIGHT};
+        platforms[i].timeLeft = 1.0f; 
+        platforms[i].active = true;
+    }
+    // Guarantee a platform under the player at the start
+    platforms[0].rect = (Rectangle){WALL_WIDTH + 80, SCREEN_HEIGHT - PLAYER_HEIGHT, PLATFORM_WIDTH, PLATFORM_HEIGHT};
+    platforms[0].timeLeft = 1.0f;
+    platforms[0].active = true;
+
+    score = 0;
+    gameOver = false;
+}
+
+void UpdateGame(float deltaTime) {
+    if (gameOver) return;
+
+    if (IsKeyPressed(KEY_SPACE) && player.velocity.y == 0) {
+        player.velocity.y = -JUMP_FORCE;
+        player.onGround = false;
+    }
+
+    if (IsKeyDown(KEY_A)) {
+        player.rect.x -= 200 * deltaTime;
+    }
+    if (IsKeyDown(KEY_D)) {
+        player.rect.x += 200 * deltaTime;
+    }
+
+    player.velocity.y += GRAVITY * deltaTime;
+    player.rect.y += player.velocity.y * deltaTime;
+    player.rect.x += player.velocity.x * deltaTime;
+
+    for (int i = 0; i < MAX_PLATFORMS; i++) {
+        platforms[i].rect.x -= SCROLL_SPEED * deltaTime;
+
+        // when goes past left edge respawns at right edge 
+        if (platforms[i].rect.x + platforms[i].rect.width < 0) {
+            ResetPlatforms(&platforms[i], 1);
+            platforms[i].rect.x = SCREEN_WIDTH + (float)GetRandomValue(0, 200);
+        }
+    }
+    score += SCROLL_SPEED * deltaTime * 0.1f; 
+
+    for (int i = 0; i < MAX_PLATFORMS; i++) {
+        if (platforms[i].active && CheckCollisionRecs(player.rect, platforms[i].rect) && player.velocity.y > 0) {
+            player.rect.y = platforms[i].rect.y - PLAYER_HEIGHT;
+            player.velocity.y = 0;
+            player.onGround = true;
+
+            platforms[i].timeLeft -= deltaTime;
+            if (platforms[i].timeLeft <= 0) {
+                platforms[i].active = false; // Deactivate platform
+            }
+        }
+    }
+
+    if (player.rect.y > SCREEN_HEIGHT) {
+        gameOver = true;
+    }
+
+    if (CheckCollisionRecs(player.rect, WallOfFlesh)) {
+        gameOver = true;
+    }
+}
+
+void ResetPlatforms(Platform* platforms, int count) {
+    for (int i = 0; i < count; i++) {
+        platforms[i].rect = (Rectangle){(float)GetRandomValue(0, SCREEN_WIDTH - PLATFORM_WIDTH), (float)GetRandomValue(0, SCREEN_HEIGHT - PLATFORM_HEIGHT), PLATFORM_WIDTH, PLATFORM_HEIGHT};
+        platforms[i].timeLeft = 3.0f; 
+        platforms[i].active = true;
+    }
+}
+
+void DrawGame() {
+    for (int i = 0; i < MAX_PLATFORMS; i++) {
+        if (platforms[i].active) {
+            DrawRectangleRec(platforms[i].rect, BLUE);
+        }
+    }
+
+    DrawRectangleRec(WallOfFlesh, RED);
+
+    DrawText(TextFormat("Score: %d", (int)score), 10, 10, 20, BLACK);
+}
+
+void DrawGameOverScreen() {
+    DrawText("Game Over!", SCREEN_WIDTH/2 - MeasureText("Game Over!", 40)/2, SCREEN_HEIGHT/2 - 20, 40, RED);
+    DrawText(TextFormat("Final Score: %d", (int)score), SCREEN_WIDTH/2 - MeasureText(TextFormat("Final Score: %d", (int)score), 20)/2, SCREEN_HEIGHT/2 + 30, 20, BLACK);
+    DrawText("Press R to Restart", SCREEN_WIDTH/2 - MeasureText("Press R to Restart", 20)/2, SCREEN_HEIGHT/2 + 60, 20, BLACK);
+
+    if (IsKeyPressed(KEY_R)) {
+        InitGame();
+    }
+}
+
