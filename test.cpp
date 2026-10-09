@@ -14,6 +14,12 @@
 #define MAX_PLATFORMS 10
 #define SCROLL_SPEED 150.0f
 #define WALL_WIDTH 100
+#define MOVE_SPEED 200.0f
+#define POWERUP_SIZE 30
+#define POWERUP_DURATION 5.0f
+#define BOOST_MULTIPLIER 1.5f
+#define POWERUP_MIN_INTERVAL 15
+#define POWERUP_MAX_INTERVAL 25
 
 
 typedef struct {
@@ -21,6 +27,17 @@ typedef struct {
     float timeLeft;
     bool active;
 } Platform;
+
+typedef enum {
+    POWERUP_JUMP,  // green box
+    POWERUP_SPEED  // blue box
+} PowerUpType;
+
+typedef struct {
+    Rectangle rect;
+    PowerUpType type;
+    bool active;
+} PowerUp;
 
 typedef struct {
     Rectangle rect;
@@ -36,6 +53,10 @@ bool gameOver = false;
 Texture2D playerTexture;
 Rectangle sourceRec;
 Rectangle WallOfFlesh = {0, 0, WALL_WIDTH, SCREEN_HEIGHT};
+PowerUp powerUp;
+float powerUpSpawnTimer = 0;
+float jumpBoostTimeLeft = 0;
+float speedBoostTimeLeft = 0;
 
 // Function prototypes
 void InitGame();
@@ -43,6 +64,8 @@ void UpdateGame(float deltaTime);
 void DrawGame();
 void DrawGameOverScreen();
 void ResetPlatforms(Platform* platforms, int count);
+void TrySpawnPowerUp();
+void UpdatePowerUps(float deltaTime);
 
 int main() {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Platformer");
@@ -105,6 +128,11 @@ void InitGame() {
     platforms[0].timeLeft = 1.0f;
     platforms[0].active = true;
 
+    powerUp.active = false;
+    powerUpSpawnTimer = (float)GetRandomValue(POWERUP_MIN_INTERVAL, POWERUP_MAX_INTERVAL);
+    jumpBoostTimeLeft = 0;
+    speedBoostTimeLeft = 0;
+
     score = 0;
     gameOver = false;
 }
@@ -112,16 +140,19 @@ void InitGame() {
 void UpdateGame(float deltaTime) {
     if (gameOver) return;
 
+    float jumpForce = (jumpBoostTimeLeft > 0) ? JUMP_FORCE * BOOST_MULTIPLIER : JUMP_FORCE;
+    float moveSpeed = (speedBoostTimeLeft > 0) ? MOVE_SPEED * BOOST_MULTIPLIER : MOVE_SPEED;
+
     if (IsKeyPressed(KEY_SPACE) && player.velocity.y == 0) {
-        player.velocity.y = -JUMP_FORCE;
+        player.velocity.y = -jumpForce;
         player.onGround = false;
     }
 
     if (IsKeyDown(KEY_A)) {
-        player.rect.x -= 200 * deltaTime;
+        player.rect.x -= moveSpeed * deltaTime;
     }
     if (IsKeyDown(KEY_D)) {
-        player.rect.x += 200 * deltaTime;
+        player.rect.x += moveSpeed * deltaTime;
     }
 
     player.velocity.y += GRAVITY * deltaTime;
@@ -137,7 +168,9 @@ void UpdateGame(float deltaTime) {
             platforms[i].rect.x = SCREEN_WIDTH + (float)GetRandomValue(0, 200);
         }
     }
-    score += SCROLL_SPEED * deltaTime * 0.1f; 
+    score += SCROLL_SPEED * deltaTime * 0.1f;
+
+    UpdatePowerUps(deltaTime);
 
     for (int i = 0; i < MAX_PLATFORMS; i++) {
         if (platforms[i].active && CheckCollisionRecs(player.rect, platforms[i].rect) && player.velocity.y > 0) {
@@ -169,6 +202,58 @@ void ResetPlatforms(Platform* platforms, int count) {
     }
 }
 
+// Places a random power-up on top of a platform in the right half of the screen (or just past it)
+void TrySpawnPowerUp() {
+    int candidates[MAX_PLATFORMS];
+    int count = 0;
+    for (int i = 0; i < MAX_PLATFORMS; i++) {
+        if (platforms[i].active && platforms[i].rect.x >= SCREEN_WIDTH / 2 && platforms[i].rect.y >= POWERUP_SIZE) {
+            candidates[count++] = i;
+        }
+    }
+
+    if (count == 0) {
+        powerUpSpawnTimer = 1.0f; // no good platform right now, try again shortly
+        return;
+    }
+
+    Rectangle p = platforms[candidates[GetRandomValue(0, count - 1)]].rect;
+    powerUp.rect = (Rectangle){p.x + (p.width - POWERUP_SIZE) / 2, p.y - POWERUP_SIZE, POWERUP_SIZE, POWERUP_SIZE};
+    powerUp.type = (GetRandomValue(0, 1) == 0) ? POWERUP_JUMP : POWERUP_SPEED;
+    powerUp.active = true;
+}
+
+void UpdatePowerUps(float deltaTime) {
+    if (jumpBoostTimeLeft > 0) jumpBoostTimeLeft -= deltaTime;
+    if (speedBoostTimeLeft > 0) speedBoostTimeLeft -= deltaTime;
+
+    if (!powerUp.active) {
+        powerUpSpawnTimer -= deltaTime;
+        if (powerUpSpawnTimer <= 0) {
+            TrySpawnPowerUp();
+        }
+        return;
+    }
+
+    // scrolls with the platforms
+    powerUp.rect.x -= SCROLL_SPEED * deltaTime;
+
+    if (CheckCollisionRecs(player.rect, powerUp.rect)) {
+        if (powerUp.type == POWERUP_JUMP) {
+            jumpBoostTimeLeft = POWERUP_DURATION;
+        } else {
+            speedBoostTimeLeft = POWERUP_DURATION;
+        }
+        powerUp.active = false;
+    } else if (powerUp.rect.x + powerUp.rect.width < 0) {
+        powerUp.active = false; // missed it
+    }
+
+    if (!powerUp.active) {
+        powerUpSpawnTimer = (float)GetRandomValue(POWERUP_MIN_INTERVAL, POWERUP_MAX_INTERVAL);
+    }
+}
+
 void DrawGame() {
     for (int i = 0; i < MAX_PLATFORMS; i++) {
         if (platforms[i].active) {
@@ -176,9 +261,23 @@ void DrawGame() {
         }
     }
 
+    if (powerUp.active) {
+        DrawRectangleRec(powerUp.rect, (powerUp.type == POWERUP_JUMP) ? GREEN : DARKBLUE);
+        DrawRectangleLinesEx(powerUp.rect, 2, BLACK);
+    }
+
     DrawRectangleRec(WallOfFlesh, RED);
 
     DrawText(TextFormat("Score: %d", (int)score), 10, 10, 20, BLACK);
+
+    int hudY = 35;
+    if (jumpBoostTimeLeft > 0) {
+        DrawText(TextFormat("Jump Boost: %.1fs", jumpBoostTimeLeft), 10, hudY, 20, DARKGREEN);
+        hudY += 25;
+    }
+    if (speedBoostTimeLeft > 0) {
+        DrawText(TextFormat("Speed Boost: %.1fs", speedBoostTimeLeft), 10, hudY, 20, DARKBLUE);
+    }
 }
 
 void DrawGameOverScreen() {
