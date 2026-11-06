@@ -2,6 +2,9 @@
 #include "stdlib.h"
 #include "stdio.h"
 
+#include "scene_manager.hpp"
+#include "main_menu_scene.hpp"
+
 //constants
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
@@ -67,37 +70,22 @@ void ResetPlatforms(Platform* platforms, int count);
 void TrySpawnPowerUp();
 void UpdatePowerUps(float deltaTime);
 
-int main() {
-    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Platformer");
+// The platformer gameplay, wrapped as a scene
+class GameScene : public Scene {
+public:
+    void Begin() override {
+        playerTexture = ResourceManager::GetInstance()->GetTexture("scott.png");
+        sourceRec = (Rectangle){ 0, 0, (float)playerTexture.width/8, (float)playerTexture.height };
+        InitGame();
+    }
 
-    playerTexture = LoadTexture("scott.png");
-    sourceRec = (Rectangle){ 0, 0, (float)playerTexture.width/8, (float)playerTexture.height };
+    void End() override {}
 
-    InitGame();
+    void Update() override {
+        UpdateGame(GetFrameTime());
+    }
 
-    SetTargetFPS(60); 
-
-    // int currentFrame = 0;
-    // int frameCounter = 0;
-    // int frameSpeed = 8;
-
-    while (!WindowShouldClose()) { 
-        float deltaTime = GetFrameTime();
-
-        UpdateGame(deltaTime);
-
-        // frameCounter++;
-        // if (frameCounter >= (60/frameSpeed)) {
-        //     frameCounter = 0;
-        //     currentFrame++;
-        //     if (currentFrame > 7) currentFrame = 0;
-
-        //     sourceRec.x = (float)currentFrame * (float)playerTexture.width/8;
-        // }
-
-        BeginDrawing();
-        ClearBackground(RAYWHITE);
-
+    void Draw() override {
         if (gameOver) {
             DrawGameOverScreen();
         } else {
@@ -105,11 +93,48 @@ int main() {
         }
 
         DrawTexturePro(playerTexture, sourceRec, (Rectangle){player.rect.x, player.rect.y, PLAYER_WIDTH, PLAYER_HEIGHT}, (Vector2){0, 0}, 0.0f, WHITE);
+    }
+};
+
+int main() {
+    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Platformer");
+    SetTargetFPS(60);
+
+    SceneManager scene_manager;
+
+    MainMenuScene main_menu_scene;
+    main_menu_scene.SetSceneManager(&scene_manager);
+
+    GameScene game_scene;
+    game_scene.SetSceneManager(&scene_manager);
+
+    scene_manager.RegisterScene(&main_menu_scene, SCENE_MAIN_MENU);
+    scene_manager.RegisterScene(&game_scene, SCENE_GAME);
+
+    scene_manager.SwitchScene(SCENE_MAIN_MENU);
+
+    while (!WindowShouldClose()) {
+        Scene* active_scene = scene_manager.GetActiveScene();
+
+        BeginDrawing();
+        ClearBackground(RAYWHITE);
+
+        if (active_scene != nullptr) {
+            active_scene->Update();
+            active_scene->Draw();
+        }
 
         EndDrawing();
     }
 
-    CloseWindow(); 
+    Scene* active_scene = scene_manager.GetActiveScene();
+    if (active_scene != nullptr) {
+        active_scene->End();
+    }
+
+    ResourceManager::GetInstance()->UnloadAllTextures();
+
+    CloseWindow();
     return 0;
 }
 
