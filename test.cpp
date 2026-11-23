@@ -1,6 +1,7 @@
 #include "raylib.h"
 #include "stdlib.h"
 #include "stdio.h"
+#include "math.h"
 
 #include "scene_manager.hpp"
 #include "main_menu_scene.hpp"
@@ -23,6 +24,16 @@
 #define BOOST_MULTIPLIER 1.5f
 #define POWERUP_MIN_INTERVAL 15
 #define POWERUP_MAX_INTERVAL 25
+
+//  GRAPPLING HOOK settings and vars
+#define HOOK_SPEED 1800.0f      // how fast the hook head is.
+#define MAX_ROPE_LENGTH 520.0f  // max hook length.
+#define MIN_ROPE_LENGTH 40.0f   // how short the rope can be so you can't reel it in all the way and get stuck inside a platform
+#define REEL_SPEED 200.0f       // rope pulled in (W) or let out (S) per second
+#define SWING_CONTROL 450.0f    // how hard A/D push a swing along. Bigger = faster, smaller = more sluggish.
+#define HOOK_RADIUS 6.0f        // how big the hook head looks
+#define AIR_DRAG 0.8f           // slows sideways speed in the air, so the speed you get off a swing fades instead of lasting forever
+#define GROUND_FRICTION 6.0f    // same thing, but while standing on a platform
 
 
 typedef struct {
@@ -48,6 +59,28 @@ typedef struct {
     bool onGround;
 } Player;
 
+// HOOK STATES
+typedef enum {
+    HOOK_IDLE,      // not shot yet and aiming crosshair is drawn
+    HOOK_FLYING,    // hook is moving w/ no effect on the player yet
+    HOOK_ATTACHED   // head is stuck in platform and the rope constrains the player
+} HookState;
+
+// Everything the hook has to remember between frames.
+//
+// Not every field matters all the time - depends on the state:
+//   HOOK_IDLE      - ignore everything else in here
+//   HOOK_FLYING    - position and velocity matter, attachedPlatform is -1
+//   HOOK_ATTACHED  - attachedPlatform, anchorOffset and ropeLength matter velocity doesn't
+typedef struct {
+    HookState state;
+    Vector2 position;       // where the hook head is on screen right now
+    Vector2 velocity;       // how fast hook is in flight
+    int attachedPlatform;   // which platform it's stuck in, -1 if not stuck
+    Vector2 anchorOffset;   // where it stuck, counted from the platform's top-left corner. platform slides left per frame
+    float ropeLength;       // how long the rope is; always kept between MIN_ROPE_LENGTH and MAX_ROPE_LENGTH
+} Hook;
+
 // Global variables
 Platform platforms[MAX_PLATFORMS];
 Player player;
@@ -60,6 +93,7 @@ PowerUp powerUp;
 float powerUpSpawnTimer = 0;
 float jumpBoostTimeLeft = 0;
 float speedBoostTimeLeft = 0;
+Hook hook;
 
 // Function prototypes
 void InitGame();
@@ -69,6 +103,215 @@ void DrawGameOverScreen();
 void ResetPlatforms(Platform* platforms, int count);
 void TrySpawnPowerUp();
 void UpdatePowerUps(float deltaTime);
+void FireHook(Vector2 target);
+void ReleaseHook();
+void UpdateHook(float deltaTime);
+void DrawHook();
+
+// vector helpers
+static Vector2 V2Add(Vector2 a, Vector2 b)      { return (Vector2){ a.x + b.x, a.y + b.y }; }
+static Vector2 V2Sub(Vector2 a, Vector2 b)      { return (Vector2){ a.x - b.x, a.y - b.y }; }
+static Vector2 V2Scale(Vector2 a, float s)      { return (Vector2){ a.x * s, a.y * s }; }
+static float   V2Dot(Vector2 a, Vector2 b)      { return a.x * b.x + a.y * b.y; }
+static float   V2Length(Vector2 a)              { return sqrtf(a.x * a.x + a.y * a.y); }
+
+static Vector2 V2Normalize(Vector2 a) {
+    float len = V2Length(a);
+    if (len < 0.0001f) return (Vector2){ 0, 0 };
+    return (Vector2){ a.x / len, a.y / len };
+}
+
+static Vector2 PlayerCenter() {
+    return (Vector2){ player.rect.x + PLAYER_WIDTH / 2.0f, player.rect.y + PLAYER_HEIGHT / 2.0f };
+}
+
+// If Hook is stuck, stores location of the anchor point in world coordinates. The 
+// hook remembers which platform it's attached to and where on that platform it stuck, 
+// but the platforms slides left every frame so we have to add that offset to the 
+// platform's current position to get the anchor point.
+//
+// Only when state is HOOK_ATTACHED, otherwise (0,0)
+static Vector2 HookAnchor() {
+    Rectangle r = platforms[hook.attachedPlatform].rect;
+    return (Vector2){ r.x + hook.anchorOffset.x, r.y + hook.anchorOffset.y };
+}
+
+// Finds where the line from a to b first crosses the edge of rectangle r.
+//
+//   a, b : the line, usually one frame of hook travel
+//   r    : the platform being checking
+//   out  : gets the crossing point; left alone if there's nothing hit
+//   returns true if line touches the rectangle at all
+//
+// We check all four edges and keep the closest hit, so the hook sticks to side
+// it would actually have hit first instead of whicever edge we happened to test
+// first. The CheckCollisionPointRec at the end catches cases where the line
+// starts inside the rectangle already so it never crosses an edge.
+static bool SegmentHitsRect(Vector2 a, Vector2 b, Rectangle r, Vector2* out) {
+    Vector2 tl = (Vector2){ r.x,           r.y };
+    Vector2 tr = (Vector2){ r.x + r.width, r.y };
+    Vector2 bl = (Vector2){ r.x,           r.y + r.height };
+    Vector2 br = (Vector2){ r.x + r.width, r.y + r.height };
+
+    Vector2 edgeStart[4] = { tl, tr, br, bl };
+    Vector2 edgeEnd[4]   = { tr, br, bl, tl };
+
+    bool found = false;
+    float bestDist = 0;
+    Vector2 bestPoint = (Vector2){ 0, 0 };
+
+    for (int i = 0; i < 4; i++) {
+        Vector2 p;
+        if (CheckCollisionLines(a, b, edgeStart[i], edgeEnd[i], &p)) {
+            float d = V2Length(V2Sub(p, a));
+            if (!found || d < bestDist) { found = true; bestDist = d; bestPoint = p; }
+        }
+    }
+
+    // the hook can also start a step already inside a platform
+    if (!found && CheckCollisionPointRec(a, r)) { found = true; bestPoint = a; }
+
+    if (found && out) *out = bestPoint;
+    return found;
+}
+
+// ---------------------------------------------------------------- hook
+// Fires the hook from the player's center toward cursor.
+//
+// If a hook is already out it just gets replaced, so clicking again re-shoots
+// instead of doing nothing.
+void FireHook(Vector2 target) {
+    Vector2 center = PlayerCenter();
+    Vector2 dir = V2Normalize(V2Sub(target, center));
+    if (dir.x == 0 && dir.y == 0) return;   // clicked exactly on yourself
+
+    hook.state = HOOK_FLYING;
+    hook.position = center;
+    hook.velocity = V2Scale(dir, HOOK_SPEED);
+    hook.attachedPlatform = -1;
+}
+
+// lets go of the rope and puts the hook away + keeps player.velocity
+void ReleaseHook() {
+    hook.state = HOOK_IDLE;
+    hook.attachedPlatform = -1;
+}
+
+// Moves the hook on a frame and applies the rope to the player.
+//
+// This needs to run:
+//   * after the player has moved, so it's fixing a position that's already final for this frame
+//   * after the platforms have slid left, so HookAnchor() isn't reading stale positions
+//   * before the landing checks, so they see the fixed position
+//
+// STATES:
+//   HOOK_IDLE     - nothing
+//   HOOK_FLYING   - moves the head along and looks for a platform. Sticks if it
+//                   hits one, gives up once it runs out of rope or leaves the
+//                   screen.
+//   HOOK_ATTACHED - handles reeling, then applies the rope rule below
+void UpdateHook(float deltaTime) {
+    if (hook.state == HOOK_IDLE) return;
+
+    if (hook.state == HOOK_FLYING) {
+        Vector2 start = hook.position;
+        Vector2 end = V2Add(start, V2Scale(hook.velocity, deltaTime));
+
+        // test against every active platform, keeping the NEAREST hit
+        int hitIndex = -1;
+        float bestDist = 0;
+        Vector2 hitPoint = end;
+
+        for (int i = 0; i < MAX_PLATFORMS; i++) {
+            if (!platforms[i].active) continue;
+            Vector2 p;
+            if (SegmentHitsRect(start, end, platforms[i].rect, &p)) {
+                float d = V2Length(V2Sub(p, start));
+                if (hitIndex < 0 || d < bestDist) {
+                    hitIndex = i; bestDist = d; hitPoint = p; 
+                }
+            }
+        }
+
+        if (hitIndex >= 0) {
+            hook.state = HOOK_ATTACHED;
+            hook.position = hitPoint;
+            hook.attachedPlatform = hitIndex;
+            hook.anchorOffset = V2Sub(hitPoint, (Vector2){ platforms[hitIndex].rect.x,
+                                                           platforms[hitIndex].rect.y });
+            hook.ropeLength = V2Length(V2Sub(hitPoint, PlayerCenter()));
+            if (hook.ropeLength > MAX_ROPE_LENGTH) hook.ropeLength = MAX_ROPE_LENGTH;
+            if (hook.ropeLength < MIN_ROPE_LENGTH) hook.ropeLength = MIN_ROPE_LENGTH;
+            return;
+        }
+
+        hook.position = end;
+
+        // missed: give up once it outruns the rope or leaves the screen
+        if (V2Length(V2Sub(hook.position, PlayerCenter())) > MAX_ROPE_LENGTH ||
+            hook.position.x < 0 || hook.position.x > SCREEN_WIDTH ||
+            hook.position.y < 0 || hook.position.y > SCREEN_HEIGHT) {
+            ReleaseHook();
+        }
+        return;
+    }
+
+    // HOOK_ATTACHED
+    // the platform may have crumbled out from under the hook
+    if (hook.attachedPlatform < 0 || !platforms[hook.attachedPlatform].active) {
+        ReleaseHook();
+        return;
+    }
+
+    hook.position = HookAnchor();
+
+    // reel in / let out
+    if (IsKeyDown(KEY_W)) hook.ropeLength -= REEL_SPEED * deltaTime;
+    if (IsKeyDown(KEY_S)) hook.ropeLength += REEL_SPEED * deltaTime;
+    if (hook.ropeLength < MIN_ROPE_LENGTH) hook.ropeLength = MIN_ROPE_LENGTH;
+    if (hook.ropeLength > MAX_ROPE_LENGTH) hook.ropeLength = MAX_ROPE_LENGTH;
+
+    //  Swinging logic
+    //
+    //  Two steps and only while the rope is actually pulled tight:
+    //    1. Position - shove the player back along the rope until they're
+    //       exactly ropeLength from the anchor.
+    //
+    //    2. Speed - kill the part of their speed pointing straight away from
+    //       the anchor. A rope pulls but can't push, so only the outward part
+    //       goes. Speed heading toward the anchor stays, otherwise reeling in
+    //       would undo itself.
+    Vector2 center = PlayerCenter();
+    Vector2 toAnchor = V2Sub(hook.position, center);
+    float dist = V2Length(toAnchor);
+
+    if (dist > hook.ropeLength && dist > 0.0001f) {
+        Vector2 dir = V2Scale(toAnchor, 1.0f / dist);   // unit vector, player -> anchor
+
+        // 1. position fix: shove them back onto the circle
+        float overshoot = dist - hook.ropeLength;
+        player.rect.x += dir.x * overshoot;
+        player.rect.y += dir.y * overshoot;
+
+        // 2. speed fix: only kill movement if heading away from the anchor
+        float radial = V2Dot(player.velocity, dir);
+        if (radial < 0) player.velocity = V2Sub(player.velocity, V2Scale(dir, radial));
+    }
+}
+
+// Draws the rope and the hook head
+void DrawHook() {
+    if (hook.state == HOOK_IDLE) {
+        // small reticle so the player can see where they are aiming
+        DrawCircleLinesV(GetMousePosition(), 8.0f, Fade(BLACK, 0.35f));
+        return;
+    }
+
+    Vector2 center = PlayerCenter();
+    Color ropeColor = (hook.state == HOOK_ATTACHED) ? DARKBROWN : GRAY;
+    DrawLineEx(center, hook.position, 2.0f, ropeColor);
+    DrawCircleV(hook.position, HOOK_RADIUS, (hook.state == HOOK_ATTACHED) ? ORANGE : GRAY);
+}
 
 // The platformer gameplay, wrapped as a scene
 class GameScene : public Scene {
@@ -88,10 +331,10 @@ public:
     void Draw() override {
         if (gameOver) {
             DrawGameOverScreen();
-        } else {
-            DrawGame();
+            return;
         }
 
+        DrawGame();
         DrawTexturePro(playerTexture, sourceRec, (Rectangle){player.rect.x, player.rect.y, PLAYER_WIDTH, PLAYER_HEIGHT}, (Vector2){0, 0}, 0.0f, WHITE);
     }
 };
@@ -158,6 +401,16 @@ void InitGame() {
     jumpBoostTimeLeft = 0;
     speedBoostTimeLeft = 0;
 
+    // clear the hook. InitGame() runs both when the scene starts (from
+    // GameScene::Begin) and when R restarts, so a hook that was still attached
+    // shouldn't carry over into either.
+    hook.state = HOOK_IDLE;
+    hook.attachedPlatform = -1;
+    hook.ropeLength = 0;
+    hook.position = (Vector2){ 0, 0 };
+    hook.velocity = (Vector2){ 0, 0 };
+    hook.anchorOffset = (Vector2){ 0, 0 };
+
     score = 0;
     gameOver = false;
 }
@@ -168,16 +421,37 @@ void UpdateGame(float deltaTime) {
     float jumpForce = (jumpBoostTimeLeft > 0) ? JUMP_FORCE * BOOST_MULTIPLIER : JUMP_FORCE;
     float moveSpeed = (speedBoostTimeLeft > 0) ? MOVE_SPEED * BOOST_MULTIPLIER : MOVE_SPEED;
 
-    if (IsKeyPressed(KEY_SPACE) && player.velocity.y == 0) {
-        player.velocity.y = -jumpForce;
-        player.onGround = false;
+    // --- hook input
+    // Press to fire, hold to stay attached, let go to drop.
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) FireHook(GetMousePosition());
+    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) ReleaseHook();
+
+    if (IsKeyPressed(KEY_SPACE)) {
+        if (hook.state == HOOK_ATTACHED) {
+            // jump off the rope: keep the swing momentum + a small jump
+            ReleaseHook();
+            player.velocity.y -= jumpForce * 0.6f;
+        } else if (player.velocity.y == 0) {
+            player.velocity.y = -jumpForce;
+            player.onGround = false;
+        }
     }
 
-    if (IsKeyDown(KEY_A)) {
-        player.rect.x -= moveSpeed * deltaTime;
-    }
-    if (IsKeyDown(KEY_D)) {
-        player.rect.x += moveSpeed * deltaTime;
+    // Movement depends on the state:
+    // if on foot, A/D move the box directly
+    // if on a rope they add speed instead
+    if (hook.state == HOOK_ATTACHED) {
+        // while swinging, A/D pump the pendulum instead of teleporting you sideways
+        if (IsKeyDown(KEY_A)) player.velocity.x -= SWING_CONTROL * deltaTime;
+        if (IsKeyDown(KEY_D)) player.velocity.x += SWING_CONTROL * deltaTime;
+    } else {
+        if (IsKeyDown(KEY_A)) player.rect.x -= moveSpeed * deltaTime;
+        if (IsKeyDown(KEY_D)) player.rect.x += moveSpeed * deltaTime;
+
+        // momentum carried out of a swing bleeds off instead of lasting forever
+        float drag = player.onGround ? GROUND_FRICTION : AIR_DRAG;
+        player.velocity.x -= player.velocity.x * drag * deltaTime;
+        if (fabsf(player.velocity.x) < 1.0f) player.velocity.x = 0;
     }
 
     player.velocity.y += GRAVITY * deltaTime;
@@ -189,6 +463,8 @@ void UpdateGame(float deltaTime) {
 
         // when goes past left edge respawns at right edge 
         if (platforms[i].rect.x + platforms[i].rect.width < 0) {
+            // don't stay hooked to a platform that is about to teleport
+            if (hook.state == HOOK_ATTACHED && hook.attachedPlatform == i) ReleaseHook();
             ResetPlatforms(&platforms[i], 1);
             platforms[i].rect.x = SCREEN_WIDTH + (float)GetRandomValue(0, 200);
         }
@@ -197,6 +473,10 @@ void UpdateGame(float deltaTime) {
 
     UpdatePowerUps(deltaTime);
 
+    // the rope is solved after the platforms have scrolled, so the anchor is current
+    UpdateHook(deltaTime);
+
+    player.onGround = false;
     for (int i = 0; i < MAX_PLATFORMS; i++) {
         if (platforms[i].active && CheckCollisionRecs(player.rect, platforms[i].rect) && player.velocity.y > 0) {
             player.rect.y = platforms[i].rect.y - PLAYER_HEIGHT;
@@ -293,6 +573,8 @@ void DrawGame() {
 
     DrawRectangleRec(WallOfFlesh, RED);
 
+    DrawHook();
+
     DrawText(TextFormat("Score: %d", (int)score), 10, 10, 20, BLACK);
 
     int hudY = 35;
@@ -302,6 +584,10 @@ void DrawGame() {
     }
     if (speedBoostTimeLeft > 0) {
         DrawText(TextFormat("Speed Boost: %.1fs", speedBoostTimeLeft), 10, hudY, 20, DARKBLUE);
+        hudY += 25;
+    }
+    if (hook.state == HOOK_ATTACHED) {
+        DrawText(TextFormat("Rope: %.0f  (W reel in / S let out)", hook.ropeLength), 10, hudY, 20, DARKBROWN);
     }
 }
 
