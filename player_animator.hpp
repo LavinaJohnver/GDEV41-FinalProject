@@ -82,10 +82,10 @@ public:
 
     void Load() {
         ResourceManager* rm = ResourceManager::GetInstance();
-        runSheet = rm->GetTexture("scottrun.png");
-        idleStrip = rm->GetTexture("scottidle.png");
-        jumpImage = rm->GetTexture("scottjump.png");
-        flightImage = rm->GetTexture("scottflight.png");
+        runSheet = rm->GetTexture("sprites/player/scottrun.png");
+        idleStrip = rm->GetTexture("sprites/player/scottidle.png");
+        jumpImage = rm->GetTexture("sprites/player/scottjump.png");
+        flightImage = rm->GetTexture("sprites/player/scottflight.png");
         runSrc = (Rectangle){ 0, 0, (float)runSheet.width/(float)ANIM_FRAMES, (float)runSheet.height };
     }
 
