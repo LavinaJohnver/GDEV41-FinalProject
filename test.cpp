@@ -518,6 +518,11 @@ void UpdateGame(float deltaTime) {
         }
     }
 
+    // make it so player scrolls left w the platforms
+    if (player.onGround) {
+        player.rect.x -= SCROLL_SPEED * deltaTime;
+    }
+
     if (player.rect.y > SCREEN_HEIGHT) {
         gameOver = true;
     }
@@ -526,15 +531,13 @@ void UpdateGame(float deltaTime) {
         gameOver = true;
     }
 
-    // Hand the animator a read-only snapshot of where things ended up this frame.
-    // It runs last so it sees final positions, and UpdateGame returns early once
-    // gameOver, which freezes the pose on death.
+    // Send required stuff to animator
     PlayerState view;
-    view.rect         = player.rect;
-    view.velocity     = player.velocity;
-    view.onGround     = player.onGround;
-    view.hookAttached = (hook.state == HOOK_ATTACHED);
-    view.hookPosition = hook.position;
+    view.rect         = player.rect;                    // hitbox
+    view.velocity     = player.velocity;                // velocity
+    view.onGround     = player.onGround;                // on ground
+    view.hookAttached = (hook.state == HOOK_ATTACHED);  // if hook hit smth
+    view.hookPosition = hook.position;                  // where the hook is
 
     animator.Update(deltaTime, view);
 }
