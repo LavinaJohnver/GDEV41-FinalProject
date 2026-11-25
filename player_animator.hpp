@@ -24,7 +24,6 @@
 #define ANIM_FRAMES 8             
 #define ANIM_FPS 12.0f           
 #define ANIM_IDLE_FRAME 1         // run frame to resume from when movement restarts
-#define ANIM_MOVE_THRESHOLD 15.0f // sideways speed that still counts as moving
 
 // idle anims (scottidle.png)
 #define IDLE_FRAMES 8
@@ -114,8 +113,8 @@ public:
         if (IsKeyDown(KEY_A)) facingRight = false;
         if (IsKeyDown(KEY_D)) facingRight = true;
 
-        // get if player is moving
-        moving = IsKeyDown(KEY_A) || IsKeyDown(KEY_D) || fabsf(state.velocity.x) > ANIM_MOVE_THRESHOLD;
+        // run pose only while A or D is actually held down
+        moving = IsKeyDown(KEY_A) || IsKeyDown(KEY_D);
 
         // switch only when hook hits
         if (state.hookAttached) {

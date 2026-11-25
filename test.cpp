@@ -33,8 +33,8 @@
 #define REEL_SPEED 150.0f       // rope pulled in (W) or let out (S) per second
 #define SWING_CONTROL 450.0f    // how hard A/D push a swing along. Bigger = snappy, smaller = sluggishy
 #define HOOK_RADIUS 6.0f        // how big the hook head looks
-#define AIR_DRAG 0.8f           // slows sideways speed in the air, so the speed you get off a swing fades instead of lasting forever
-#define GROUND_FRICTION 6.0f    // same thing, but while standing on a platform
+#define AIR_DRAG 0.8f           // intertia in air. Bigger = snappy, smaller = slippery
+#define GROUND_FRICTION 6.0f    // intertia on ground
 
 
 typedef struct {
@@ -467,8 +467,10 @@ void UpdateGame(float deltaTime) {
         if (IsKeyDown(KEY_A)) player.velocity.x -= SWING_CONTROL * deltaTime;
         if (IsKeyDown(KEY_D)) player.velocity.x += SWING_CONTROL * deltaTime;
     } else {
-        if (IsKeyDown(KEY_A)) player.rect.x -= moveSpeed * deltaTime;
-        if (IsKeyDown(KEY_D)) player.rect.x += moveSpeed * deltaTime;
+        // implement ground inertia, friction slows player down after leting go else, rely on air drag
+        float accel = player.onGround ? (moveSpeed * GROUND_FRICTION) : SWING_CONTROL;
+        if (IsKeyDown(KEY_A)) player.velocity.x -= accel * deltaTime;
+        if (IsKeyDown(KEY_D)) player.velocity.x += accel * deltaTime;
 
         // momentum carried out of a swing bleeds off instead of lasting forever
         float drag = player.onGround ? GROUND_FRICTION : AIR_DRAG;
