@@ -20,11 +20,14 @@
 #define SCROLL_SPEED 150.0f
 #define WALL_WIDTH 100
 #define MOVE_SPEED 200.0f
+#define JUMP_CUTOFF 0.5f        // vertical speed when jump is cut short by letting go of the jump button
 #define POWERUP_SIZE 30
 #define POWERUP_DURATION 5.0f
 #define BOOST_MULTIPLIER 1.5f
 #define POWERUP_MIN_INTERVAL 15
 #define POWERUP_MAX_INTERVAL 25
+#define TIMESTEP(1.0f / 60.0f)  // defined physics step
+#define MAX_CATCHUP 0.25f       // most time one frame can catch up on
 
 //  GRAPPLING HOOK settings and vars
 #define HOOK_SPEED 2000.0f      // how fast the hook head is
@@ -467,6 +470,12 @@ void UpdateGame(float deltaTime) {
             player.velocity.y = -jumpForce;
             player.onGround = false;
         }
+    }
+
+    // Variable jump height where letting SPACE go while he is still rising cuts the
+    // jump short so a single press is a small jump + holding SPACE gives the full jump
+    if (IsKeyReleased(KEY_SPACE) && player.velocity.y < 0.0f) {
+        player.velocity.y *= JUMP_CUTOFF;
     }
 
     // Movement depends on the state:
