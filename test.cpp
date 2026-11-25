@@ -5,6 +5,7 @@
 
 #include "scene_manager.hpp"
 #include "main_menu_scene.hpp"
+#include "settings_menu.hpp"
 #include "player_animator.hpp"
 
 //constants
@@ -97,6 +98,9 @@ PlayerAnimator animator;   // owns everything about how Scott looks
                             // the flight pose survives letting go of the rope.
 
 bool showHitboxes = false;   // debug view, toggled with F1
+
+// top-right button that opens the pause / settings menu (ESC does the same)
+MenuButton pauseButton = { { SCREEN_WIDTH - 130, 10, 120, 40 }, "Pause" };
 
 // Function prototypes
 void InitGame();
@@ -328,15 +332,44 @@ void DrawHitboxes() {
 
 // The platformer gameplay, wrapped as a scene
 class GameScene : public Scene {
+    SettingsMenu settings_menu;   // pause menu: volume, restart, return to menu
+
 public:
     void Begin() override {
         animator.Load();
         InitGame();
+        settings_menu.Close();
     }
 
-    void End() override {}
+    void End() override {
+        settings_menu.Close();
+    }
 
     void Update() override {
+        // the game is frozen while the menu is open
+        if (settings_menu.IsOpen()) {
+            switch (settings_menu.Update()) {
+                case SETTINGS_RESTART:
+                    InitGame();
+                    break;
+                case SETTINGS_MAIN_MENU:
+                    if (GetSceneManager() != nullptr) GetSceneManager()->SwitchScene(SCENE_MAIN_MENU);
+                    break;
+                case SETTINGS_CLOSE:
+                    // the mouse may have been let go while paused; don't stay hooked
+                    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) ReleaseHook();
+                    break;
+                default:
+                    break;
+            }
+            return;
+        }
+
+        if (IsKeyPressed(KEY_ESCAPE) || pauseButton.IsClicked()) {
+            settings_menu.Open(true);
+            return;
+        }
+
         // debug toggle lives here rather than in UpdateGame, so it still works
         // while the game-over screen is up
         if (IsKeyPressed(KEY_F1)) showHitboxes = !showHitboxes;
@@ -347,17 +380,21 @@ public:
     void Draw() override {
         if (gameOver) {
             DrawGameOverScreen();
-            return;
+        } else {
+            DrawGame();
+            animator.Draw();
+            DrawHitboxes();   // on top of the sprite, so the box is never hidden by it
         }
 
-        DrawGame();
-        animator.Draw();
-        DrawHitboxes();   // on top of the sprite, so the box is never hidden by it
+        if (!settings_menu.IsOpen()) pauseButton.Draw();
+        settings_menu.Draw();
     }
 };
 
 int main() {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Platformer");
+    InitAudioDevice();
+    SetExitKey(KEY_NULL);   // ESC opens the pause menu instead of closing the game
     SetTargetFPS(60);
 
     SceneManager scene_manager;
@@ -394,6 +431,7 @@ int main() {
 
     ResourceManager::GetInstance()->UnloadAllTextures();
 
+    CloseAudioDevice();
     CloseWindow();
     return 0;
 }
@@ -443,7 +481,8 @@ void UpdateGame(float deltaTime) {
 
     // --- hook input
     // Press to fire, hold to stay attached, let go to drop.
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) FireHook(GetMousePosition());
+    // clicking the pause button shouldn't also throw the hook
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !pauseButton.IsHovered()) FireHook(GetMousePosition());
     if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) ReleaseHook();
 
     if (IsKeyPressed(KEY_SPACE)) {
@@ -635,6 +674,7 @@ void DrawGameOverScreen() {
     DrawText("Game Over!", SCREEN_WIDTH/2 - MeasureText("Game Over!", 40)/2, SCREEN_HEIGHT/2 - 20, 40, RED);
     DrawText(TextFormat("Final Score: %d", (int)score), SCREEN_WIDTH/2 - MeasureText(TextFormat("Final Score: %d", (int)score), 20)/2, SCREEN_HEIGHT/2 + 30, 20, BLACK);
     DrawText("Press R to Restart", SCREEN_WIDTH/2 - MeasureText("Press R to Restart", 20)/2, SCREEN_HEIGHT/2 + 60, 20, BLACK);
+    DrawText("ESC for Menu", SCREEN_WIDTH/2 - MeasureText("ESC for Menu", 20)/2, SCREEN_HEIGHT/2 + 90, 20, DARKGRAY);
 
     if (IsKeyPressed(KEY_R)) {
         InitGame();

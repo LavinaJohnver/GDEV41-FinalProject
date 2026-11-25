@@ -4,39 +4,15 @@
 #include <raylib.h>
 
 #include "scene_manager.hpp"
-
-// Simple clickable button
-struct MenuButton {
-    Rectangle rect;
-    const char* label;
-
-    bool IsHovered() const {
-        return CheckCollisionPointRec(GetMousePosition(), rect);
-    }
-
-    bool IsClicked() const {
-        return IsHovered() && IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
-    }
-
-    void Draw() const {
-        Color fill = IsHovered() ? SKYBLUE : LIGHTGRAY;
-        DrawRectangleRec(rect, fill);
-        DrawRectangleLinesEx(rect, 3, DARKGRAY);
-
-        const int font_size = 30;
-        int text_width = MeasureText(label, font_size);
-        DrawText(label,
-                 (int)(rect.x + (rect.width - text_width) / 2),
-                 (int)(rect.y + (rect.height - font_size) / 2),
-                 font_size, BLACK);
-    }
-};
+#include "settings_menu.hpp"
+#include "ui.hpp"
 
 class MainMenuScene : public Scene {
     const char* title = "<insert title here>";
 
     MenuButton start_button;
     MenuButton settings_button;
+    SettingsMenu settings_menu;
 
 public:
     void Begin() override {
@@ -46,18 +22,26 @@ public:
 
         start_button    = { { center_x, 260, button_width, button_height }, "Start" };
         settings_button = { { center_x, 350, button_width, button_height }, "Settings" };
+
+        settings_menu.Close();
     }
 
     void End() override {}
 
     void Update() override {
+        // while settings are open, the menu buttons underneath don't react
+        if (settings_menu.IsOpen()) {
+            settings_menu.Update();
+            return;
+        }
+
         if (start_button.IsClicked() && GetSceneManager() != nullptr) {
             GetSceneManager()->SwitchScene(SCENE_GAME);
+            return;
         }
 
         if (settings_button.IsClicked()) {
-            // TODO: settings scene not implemented yet (placeholder)
-            std::cout << "Settings not implemented yet" << std::endl;
+            settings_menu.Open(false);
         }
     }
 
@@ -68,6 +52,8 @@ public:
 
         start_button.Draw();
         settings_button.Draw();
+
+        settings_menu.Draw();
     }
 };
 
