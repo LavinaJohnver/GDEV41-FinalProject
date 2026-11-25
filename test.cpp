@@ -93,8 +93,11 @@ float powerUpSpawnTimer = 0;
 float jumpBoostTimeLeft = 0;
 float speedBoostTimeLeft = 0;
 Hook hook;
-PlayerAnimator animator;   // owns everything about how Scott looks
-                            // the flight pose survives letting go of the rope.
+
+int groundPlatform = -1;      // store platform player is currently on, -1 if airborne
+int dropThroughPlatform = -1; // store platform player is falling through after pressing S
+
+PlayerAnimator animator;      // player sprite animator, handles pose and animation frame selection
 
 bool showHitboxes = false;   // debug view, toggled with F1
 
@@ -207,7 +210,7 @@ void ReleaseHook() {
 // STATES:
 //   HOOK_IDLE     - nothing
 //   HOOK_FLYING   - moves the head along and looks for a platform. Sticks if it
-//                   hits one, gives up once it runs out of rope or leaves the
+//                   hits one then gives up once it runs out of rope or leaves the
 //                   screen.
 //   HOOK_ATTACHED - handles reeling, then applies the rope rule below
 void UpdateHook(float deltaTime) {
@@ -419,11 +422,12 @@ void InitGame() {
     jumpBoostTimeLeft = 0;
     speedBoostTimeLeft = 0;
 
+    groundPlatform = -1;
+    dropThroughPlatform = -1;
+
     animator.Reset();
 
-    // clear the hook. InitGame() runs both when the scene starts (from
-    // GameScene::Begin) and when R restarts, so a hook that was still attached
-    // shouldn't carry over into either.
+    // clear hook variables
     hook.state = HOOK_IDLE;
     hook.attachedPlatform = -1;
     hook.ropeLength = 0;
@@ -445,6 +449,12 @@ void UpdateGame(float deltaTime) {
     // Press to fire, hold to stay attached, let go to drop.
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) FireHook(GetMousePosition());
     if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) ReleaseHook();
+
+    // S drops player through platform
+    if (IsKeyPressed(KEY_S) && player.onGround && groundPlatform >= 0) {
+        dropThroughPlatform = groundPlatform;
+        player.onGround = false;
+    }
 
     if (IsKeyPressed(KEY_SPACE)) {
         animator.OnJump();   // ends the hook flight and straightens him up
@@ -489,6 +499,7 @@ void UpdateGame(float deltaTime) {
         if (platforms[i].rect.x + platforms[i].rect.width < 0) {
             // don't stay hooked to a platform that is about to teleport
             if (hook.state == HOOK_ATTACHED && hook.attachedPlatform == i) ReleaseHook();
+            if (dropThroughPlatform == i) dropThroughPlatform = -1;  // index gets reused
             ResetPlatforms(&platforms[i], 1);
             platforms[i].rect.x = SCREEN_WIDTH + (float)GetRandomValue(0, 200);
         }
@@ -501,15 +512,18 @@ void UpdateGame(float deltaTime) {
     UpdateHook(deltaTime);
 
     player.onGround = false;
+    groundPlatform = -1;
 
-    // While the rope is attached he swings straight past platforms instead of
-    // landing on them. Let go or jump and landing works again.
+    // while the rope is attached he swings straight through platforms
     if (hook.state != HOOK_ATTACHED) {
         for (int i = 0; i < MAX_PLATFORMS; i++) {
+            if (i == dropThroughPlatform) continue;   // S was pressed, fall through this one
+
             if (platforms[i].active && CheckCollisionRecs(player.rect, platforms[i].rect) && player.velocity.y > 0) {
                 player.rect.y = platforms[i].rect.y - PLAYER_HEIGHT;
                 player.velocity.y = 0;
                 player.onGround = true;
+                groundPlatform = i;
                 animator.OnLand();   // ends the hook flight and straightens him up
 
                 platforms[i].timeLeft -= deltaTime;
@@ -518,6 +532,12 @@ void UpdateGame(float deltaTime) {
                 }
             }
         }
+    }
+
+    // stop ignoring prev platform once he is properly clear
+    if (dropThroughPlatform >= 0) {
+        const Platform& p = platforms[dropThroughPlatform];
+        if (!p.active || !CheckCollisionRecs(player.rect, p.rect)) dropThroughPlatform = -1;
     }
 
     // make it so player scrolls left w the platforms
