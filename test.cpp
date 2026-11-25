@@ -27,7 +27,7 @@
 #define BOOST_MULTIPLIER 1.5f
 #define POWERUP_MIN_INTERVAL 15
 #define POWERUP_MAX_INTERVAL 25
-#define TIMESTEP(1.0f / 60.0f)  // defined physics step
+#define TIMESTEP (1.0f / 60.0f)  // defined physics step
 #define MAX_CATCHUP 0.25f       // most time one frame can catch up on
 
 //  GRAPPLING HOOK settings and vars
