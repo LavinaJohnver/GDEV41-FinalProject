@@ -8,29 +8,37 @@
 #include "settings_menu.hpp"
 #include "player_animator.hpp"
 
-//constants
+// -------------------------- CONSTANTS
 #define SCREEN_WIDTH 1280
 #define SCREEN_HEIGHT 720
+#define TIMESTEP (1.0f / 60.0f) // defined physics step
+#define MAX_CATCHUP 0.25f       // most time one frame can catch up on
+
+// PLATFORM SETTINGS
 #define PLATFORM_WIDTH 100
 #define PLATFORM_HEIGHT 10
+#define MAX_PLATFORMS 10
+#define MIN_X_GAP 30.0f   // least empty horizontal space between one platform and the next
+#define MIN_Y_GAP 70.0f   // least empty vertical space between one platform and the next
+
+// PLAYER SETTINGS
 #define PLAYER_WIDTH 75
 #define PLAYER_HEIGHT 75
-#define GRAVITY 700.0f
-#define JUMP_FORCE 400.0f
-#define MAX_PLATFORMS 10
-#define SCROLL_SPEED 150.0f
-#define WALL_WIDTH 100
 #define MOVE_SPEED 200.0f
 #define JUMP_CUTOFF 0.5f        // vertical speed when jump is cut short by letting go of the jump button
+
+// WORLD SETTINGS
+#define GRAVITY 700.0f
+#define JUMP_FORCE 400.0f
+#define SCROLL_SPEED 150.0f
+#define WALL_WIDTH 100
 #define POWERUP_SIZE 30
 #define POWERUP_DURATION 5.0f
 #define BOOST_MULTIPLIER 1.5f
 #define POWERUP_MIN_INTERVAL 15
 #define POWERUP_MAX_INTERVAL 25
-#define TIMESTEP (1.0f / 60.0f)  // defined physics step
-#define MAX_CATCHUP 0.25f       // most time one frame can catch up on
 
-//  GRAPPLING HOOK settings and vars
+//  GRAPPLING HOOK SETTINGS
 #define HOOK_SPEED 2000.0f      // how fast the hook head is
 #define MAX_ROPE_LENGTH 520.0f  // max hook range
 #define MIN_ROPE_LENGTH 40.0f   // min hook length
@@ -527,7 +535,7 @@ void UpdateGame(float deltaTime) {
     } else {
         // implement ground inertia, friction slows player down after leting go else, rely on air drag
         float accel = player.onGround ? (moveSpeed * GROUND_FRICTION) : SWING_CONTROL;
-        if (IsKeyDown(KEY_A)) player.velocity.x -= accel * deltaTime;
+        if (IsKeyDown(KEY_A)) player.velocity.x -= accel * deltaTime; 
         if (IsKeyDown(KEY_D)) player.velocity.x += accel * deltaTime;
 
         // momentum carried out of a swing bleeds off instead of lasting forever
@@ -549,8 +557,37 @@ void UpdateGame(float deltaTime) {
             if (hook.state == HOOK_ATTACHED && hook.attachedPlatform == i) ReleaseHook();
             if (dropThroughPlatform == i) dropThroughPlatform = -1;  // index gets reused
             ResetPlatforms(&platforms[i], 1);
-            platforms[i].rect.x = SCREEN_WIDTH + (float)GetRandomValue(0, 200);
+
+            // queue it behind whichever platform is furthest right, so they don't clump up
+            float rightmost = 0.0f;
+            int   lastIdx   = -1;
+            for (int j = 0; j < MAX_PLATFORMS; j++) {
+                if (j == i || !platforms[j].active) continue;
+                float edge = platforms[j].rect.x + platforms[j].rect.width;
+                if (edge > rightmost) { rightmost = edge; lastIdx = j; }
+            }
+            platforms[i].rect.x = fmaxf(SCREEN_WIDTH, rightmost + MIN_X_GAP) + (float)GetRandomValue(0, 120);
+
+            // re-roll the height until it is far enough from the platform before it
+            if (lastIdx >= 0) {
+                float refY = platforms[lastIdx].rect.y;
+                int tries = 0;
+                while (fabsf(platforms[i].rect.y - refY) < MIN_Y_GAP && tries < 10) {
+                    platforms[i].rect.y = (float)GetRandomValue(0, SCREEN_HEIGHT - PLATFORM_HEIGHT);
+                    tries++;
+                }
+            }
         }
+
+        // when goes past left edge respawns at right edge 
+        // if (platforms[i].rect.x + platforms[i].rect.width < 0) {
+        //     // don't stay hooked to a platform that is about to teleport
+        //     if (hook.state == HOOK_ATTACHED && hook.attachedPlatform == i) ReleaseHook();
+        //     if (dropThroughPlatform == i) dropThroughPlatform = -1;  // index gets reused
+        //     ResetPlatforms(&platforms[i], 1);
+        //
+        //     platforms[i].rect.x = SCREEN_WIDTH + (float)GetRandomValue(0, 200);
+        // }
     }
     score += SCROLL_SPEED * deltaTime * 0.1f;
 
