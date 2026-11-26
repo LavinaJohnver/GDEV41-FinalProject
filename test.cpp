@@ -18,7 +18,7 @@
 #define GRAVITY 700.0f
 #define JUMP_FORCE 400.0f
 #define MAX_PLATFORMS 10
-#define SCROLL_SPEED 150.0f
+#define SCROLL_SPEED 150.0f 
 #define WALL_WIDTH 100
 #define MOVE_SPEED 200.0f
 #define JUMP_CUTOFF 0.5f        // vertical speed when jump is cut short by letting go of the jump button
@@ -90,6 +90,7 @@ typedef struct {
 Platform platforms[MAX_PLATFORMS];
 Player player;
 float score = 0;
+float scrollSpeed = SCROLL_SPEED;  // current scroll speed, ramps up as the score rises; reset in InitGame
 bool gameOver = false;
 Rectangle WallOfFlesh = {0, 0, WALL_WIDTH, SCREEN_HEIGHT};
 Texture2D wallTex = { 0 };
@@ -471,6 +472,8 @@ void InitGame() {
         platforms[i].active = true;
     }
 
+    scrollSpeed = SCROLL_SPEED;
+
     // Guarantee a platform under the player at the start
     platforms[0].rect = (Rectangle){WALL_WIDTH + 80, SCREEN_HEIGHT - PLAYER_HEIGHT, PLATFORM_WIDTH, PLATFORM_HEIGHT};
     platforms[0].timeLeft = 1.0f;
@@ -574,8 +577,10 @@ void UpdateGame(float deltaTime) {
     player.rect.y += player.velocity.y * deltaTime;
     player.rect.x += player.velocity.x * deltaTime;
 
+    scrollSpeed += 0.01f * (score / 100.0f) * deltaTime;
+
     for (int i = 0; i < MAX_PLATFORMS; i++) {
-        platforms[i].rect.x -= SCROLL_SPEED * deltaTime;
+        platforms[i].rect.x -= scrollSpeed * deltaTime;
 
         // when goes past left edge respawns at right edge 
         if (platforms[i].rect.x + platforms[i].rect.width < 0) {
@@ -586,7 +591,7 @@ void UpdateGame(float deltaTime) {
             platforms[i].rect.x = SCREEN_WIDTH + (float)GetRandomValue(0, 200);
         }
     }
-    score += SCROLL_SPEED * deltaTime * 0.1f;
+    score += scrollSpeed * deltaTime * 0.1f;   // score = distance travelled
 
     UpdatePowerUps(deltaTime);
 
@@ -624,7 +629,7 @@ void UpdateGame(float deltaTime) {
 
     // make it so player scrolls left w the platforms
     if (player.onGround) {
-        player.rect.x -= SCROLL_SPEED * deltaTime;
+        player.rect.x -= scrollSpeed * deltaTime;
     }
 
     if (player.rect.y > SCREEN_HEIGHT) {
@@ -680,7 +685,7 @@ void UpdatePowerUps(float deltaTime) {
     }
 
     // scrolls with the platforms
-    powerUp.rect.x -= SCROLL_SPEED * deltaTime;
+    powerUp.rect.x -= scrollSpeed * deltaTime;
 
     if (CheckCollisionRecs(player.rect, powerUp.rect)) {
         if (powerUp.type == POWERUP_JUMP) {
