@@ -92,6 +92,8 @@ Player player;
 float score = 0;
 bool gameOver = false;
 Rectangle WallOfFlesh = {0, 0, WALL_WIDTH, SCREEN_HEIGHT};
+Texture2D wallTex = { 0 };
+Texture2D bgTex = { 0 };
 PowerUp powerUp;
 float powerUpSpawnTimer = 0;
 float jumpBoostTimeLeft = 0;
@@ -344,6 +346,8 @@ class GameScene : public Scene {
 public:
     void Begin() override {
         animator.Load();
+        wallTex = ResourceManager::GetInstance()->GetTexture("sprites/environment/wallofflesh.png");
+        bgTex   = ResourceManager::GetInstance()->GetTexture("sprites/environment/background.png");
         InitGame();
         settings_menu.Close();
         showControls = true;
@@ -695,9 +699,15 @@ void UpdatePowerUps(float deltaTime) {
 }
 
 void DrawGame() {
+    if (bgTex.id > 0) {
+            Rectangle src  = { 0.0f, 0.0f, (float)bgTex.width, (float)bgTex.height };
+            Rectangle dest = { 0.0f, 0.0f, (float)GetScreenWidth(), (float)GetScreenHeight() };
+            DrawTexturePro(bgTex, src, dest, (Vector2){ 0.0f, 0.0f }, 0.0f, WHITE);
+        }
+            
     for (int i = 0; i < MAX_PLATFORMS; i++) {
         if (platforms[i].active) {
-            DrawRectangleRec(platforms[i].rect, BLUE);
+            DrawRectangleRec(platforms[i].rect, WHITE);
         }
     }
 
@@ -705,9 +715,17 @@ void DrawGame() {
         DrawRectangleRec(powerUp.rect, (powerUp.type == POWERUP_JUMP) ? GREEN : DARKBLUE);
         DrawRectangleLinesEx(powerUp.rect, 2, BLACK);
     }
+    
+    if (wallTex.id > 0) {
+        float tileH = WALL_WIDTH * ((float)wallTex.height / (float)wallTex.width);
+        Rectangle src = { 0.0f, 0.0f, (float)wallTex.width, (float)wallTex.height };
 
-    DrawRectangleRec(WallOfFlesh, RED);
-
+        for (float y = 0.0f; y < SCREEN_HEIGHT; y += tileH) {
+            Rectangle dest = { WallOfFlesh.x, y, WALL_WIDTH, tileH };
+            DrawTexturePro(wallTex, src, dest, (Vector2){ 0.0f, 0.0f }, 0.0f, WHITE);
+        }
+    }
+    
     DrawHook();
 
     DrawText(TextFormat("Score: %d", (int)score), 10, 10, 20, BLACK);
