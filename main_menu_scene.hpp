@@ -8,7 +8,7 @@
 #include "ui.hpp"
 
 class MainMenuScene : public Scene {
-    const char* title = "<insert title here>";
+    const char* title = "<Swinging Scott>";
 
     MenuButton start_button;
     MenuButton settings_button;

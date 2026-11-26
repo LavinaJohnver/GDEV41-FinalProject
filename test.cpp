@@ -48,8 +48,8 @@ typedef struct {
 } Platform;
 
 typedef enum {
-    POWERUP_JUMP,  // green box
-    POWERUP_SPEED  // blue box
+    POWERUP_JUMP,  // green 
+    POWERUP_SPEED  // blue 
 } PowerUpType;
 
 typedef struct {
@@ -105,7 +105,6 @@ PlayerAnimator animator;      // player sprite animator, handles pose and animat
 
 bool showHitboxes = false;   // debug view, toggled with F1
 
-// top-right button that opens the pause / settings menu (ESC does the same)
 MenuButton pauseButton = { { SCREEN_WIDTH - 130, 10, 120, 40 }, "Pause" };
 
 // Function prototypes
@@ -121,6 +120,8 @@ void ReleaseHook();
 void UpdateHook(float deltaTime);
 void DrawHook();
 void DrawHitboxes();
+void SyncAnimator(float deltaTime);
+void DrawControlsScreen();
 
 // vector helpers
 static Vector2 V2Add(Vector2 a, Vector2 b)      { return (Vector2){ a.x + b.x, a.y + b.y }; }
@@ -336,15 +337,16 @@ void DrawHitboxes() {
     DrawCircleV(PlayerCenter(), 3.0f, MAGENTA);
 }
 
-// The platformer gameplay, wrapped as a scene
 class GameScene : public Scene {
-    SettingsMenu settings_menu;   // pause menu: volume, restart, return to menu
+    SettingsMenu settings_menu;  
+    bool showControls = false;    
 
 public:
     void Begin() override {
         animator.Load();
         InitGame();
         settings_menu.Close();
+        showControls = true;
     }
 
     void End() override {
@@ -352,7 +354,7 @@ public:
     }
 
     void Update() override {
-        // the game is frozen while the menu is open
+        // freeze game while menu is open
         if (settings_menu.IsOpen()) {
             switch (settings_menu.Update()) {
                 case SETTINGS_RESTART:
@@ -362,11 +364,19 @@ public:
                     if (GetSceneManager() != nullptr) GetSceneManager()->SwitchScene(SCENE_MAIN_MENU);
                     break;
                 case SETTINGS_CLOSE:
-                    // the mouse may have been let go while paused; don't stay hooked
+                    // the mouse may have been let go while paused (don't stay hooked)
                     if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) ReleaseHook();
                     break;
                 default:
                     break;
+            }
+            return;
+        }
+
+        // freeze game until the player has seen the controls
+        if (showControls) {
+            if (IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ENTER) || IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                showControls = false;
             }
             return;
         }
@@ -376,8 +386,6 @@ public:
             return;
         }
 
-        // debug toggle lives here rather than in UpdateGame, so it still works
-        // while the game-over screen is up
         if (IsKeyPressed(KEY_F1)) showHitboxes = !showHitboxes;
 
         UpdateGame(GetFrameTime());
@@ -389,7 +397,12 @@ public:
         } else {
             DrawGame();
             animator.Draw();
-            DrawHitboxes();   // on top of the sprite, so the box is never hidden by it
+            DrawHitboxes();
+        }
+
+        if (showControls) {
+            DrawControlsScreen();
+            return;
         }
 
         if (!settings_menu.IsOpen()) pauseButton.Draw();
@@ -400,7 +413,7 @@ public:
 int main() {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Platformer");
     InitAudioDevice();
-    SetExitKey(KEY_NULL);   // ESC opens the pause menu instead of closing the game
+    SetExitKey(KEY_NULL);
     SetTargetFPS(60);
 
     SceneManager scene_manager;
@@ -447,6 +460,7 @@ void InitGame() {
     player.velocity = (Vector2){0, 0};
     player.onGround = false;
 
+    // spawn platforms at random heights and x positions
     for (int i = 0; i < MAX_PLATFORMS; i++) {
         platforms[i].rect = (Rectangle){(float)GetRandomValue(WALL_WIDTH + PLAYER_WIDTH, SCREEN_WIDTH * 2), (float)GetRandomValue(0, SCREEN_HEIGHT - PLATFORM_HEIGHT), PLATFORM_WIDTH, PLATFORM_HEIGHT};
         platforms[i].timeLeft = 1.0f; 
@@ -478,6 +492,22 @@ void InitGame() {
 
     score = 0;
     gameOver = false;
+
+    // give the animator the starting state so the sprite is drawn in the right
+    // place even before the first UpdateGame (i.e. behind the controls screen)
+    SyncAnimator(0.0f);
+}
+
+// Send required stuff to animator
+void SyncAnimator(float deltaTime) {
+    PlayerState view;
+    view.rect         = player.rect;                    // hitbox
+    view.velocity     = player.velocity;                // velocity
+    view.onGround     = player.onGround;                // on ground
+    view.hookAttached = (hook.state == HOOK_ATTACHED);  // if hook hit smth
+    view.hookPosition = hook.position;                  // where the hook is
+
+    animator.Update(deltaTime, view);
 }
 
 void UpdateGame(float deltaTime) {
@@ -601,15 +631,7 @@ void UpdateGame(float deltaTime) {
         gameOver = true;
     }
 
-    // Send required stuff to animator
-    PlayerState view;
-    view.rect         = player.rect;                    // hitbox
-    view.velocity     = player.velocity;                // velocity
-    view.onGround     = player.onGround;                // on ground
-    view.hookAttached = (hook.state == HOOK_ATTACHED);  // if hook hit smth
-    view.hookPosition = hook.position;                  // where the hook is
-
-    animator.Update(deltaTime, view);
+    SyncAnimator(deltaTime);
 }
 
 void ResetPlatforms(Platform* platforms, int count) {
@@ -620,7 +642,7 @@ void ResetPlatforms(Platform* platforms, int count) {
     }
 }
 
-// Places a random power-up on top of a platform in the right half of the screen (or just past it)
+// Places a random power-up on top of a platform in the right half of the screen
 void TrySpawnPowerUp() {
     int candidates[MAX_PLATFORMS];
     int count = 0;
@@ -635,7 +657,7 @@ void TrySpawnPowerUp() {
         return;
     }
 
-    Rectangle p = platforms[candidates[GetRandomValue(0, count - 1)]].rect;
+    Rectangle p = platforms[candidates[GetRandomValue(0, count - 1)]].rect; 
     powerUp.rect = (Rectangle){p.x + (p.width - POWERUP_SIZE) / 2, p.y - POWERUP_SIZE, POWERUP_SIZE, POWERUP_SIZE};
     powerUp.type = (GetRandomValue(0, 1) == 0) ? POWERUP_JUMP : POWERUP_SPEED;
     powerUp.active = true;
@@ -701,6 +723,46 @@ void DrawGame() {
     }
     if (hook.state == HOOK_ATTACHED) {
         DrawText(TextFormat("Rope: %.0f  (W reel in / S let out)", hook.ropeLength), 10, hudY, 20, DARKBROWN);
+    }
+}
+
+void DrawControlsScreen() {
+    DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.5f));
+
+    Rectangle panel = { (SCREEN_WIDTH - 620) / 2.0f, (SCREEN_HEIGHT - 520) / 2.0f, 620, 520 };
+    DrawRectangleRec(panel, RAYWHITE);
+    DrawRectangleLinesEx(panel, 4, DARKGRAY);
+
+    const char* title = "Controls";
+    DrawText(title, (int)(panel.x + (panel.width - MeasureText(title, 40)) / 2), (int)panel.y + 25, 40, BLACK);
+
+    const char* keys[] = {
+        "A / D", "SPACE", "S", "Left Click", "W / S", "SPACE", "ESC",
+    };
+    const char* actions[] = {
+        "Move left / right",
+        "Jump (hold for higher)",
+        "Drop through a platform",
+        "Hold to grapple, release to let go",
+        "Reel rope in / out (while hooked)",
+        "Jump off the rope (while hooked)",
+        "Pause",
+    };
+    const int count = sizeof(keys) / sizeof(keys[0]);
+
+    int y = (int)panel.y + 95;
+    for (int i = 0; i < count; i++) {
+        DrawText(keys[i],    (int)panel.x + 40,  y, 22, DARKBLUE);
+        DrawText(actions[i], (int)panel.x + 200, y, 22, BLACK);
+        y += 34;
+    }
+
+    const char* hint = "Don't touch the red wall or fall off the screen!";
+    DrawText(hint, (int)(panel.x + (panel.width - MeasureText(hint, 20)) / 2), y + 10, 20, RED);
+    if (((int)(GetTime() * 2)) % 2 == 0) {
+        const char* prompt = "Press SPACE or click to start";
+        DrawText(prompt, (int)(panel.x + (panel.width - MeasureText(prompt, 24)) / 2),
+                 (int)(panel.y + panel.height - 50), 24, DARKGRAY);
     }
 }
 
